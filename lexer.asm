@@ -30,17 +30,14 @@ filename    db "input.os",0
 err_unknown     db "LEXICAL ERROR: unknown symbol",10
 len_err_unknown equ $-err_unknown
 
-err_string      db "LEXICAL ERROR: unterminated string",10
-len_err_string  equ $-err_string
-
-err_comment     db "LEXICAL ERROR: unterminated comment",10
-len_err_comment equ $-err_comment
-
-err_date        db "LEXICAL ERROR: unterminated date literal",10
-len_err_date    equ $-err_date
-
 err_number     db "LEXICAL ERROR: invalid number format",10
 len_err_number equ $-err_number
+
+err_invalid_id     db "LEXICAL ERROR: invalid identifier",10
+len_err_invalid_id equ $-err_invalid_id
+
+err_invalid_op     db "LEXICAL ERROR: invalid operator",10
+len_err_invalid_op equ $-err_invalid_op
 
 
 
@@ -455,8 +452,6 @@ cloop:
 comment_block:
     add r14,2
 cb_loop:
-    cmp r14,r13
-    jge comment_error
     cmp byte [buffer+r14],'*'
     jne cb_next
     cmp byte [buffer+r14+1],'/'
@@ -468,10 +463,6 @@ cb_end:
     add r14,2
     jmp main_loop
 
-comment_error:
-    mov rsi,err_comment
-    mov rdx,len_err_comment
-    call print_error
 
 
 ; ======================
@@ -546,8 +537,6 @@ state_date:
     inc r14
 
 date_loop:
-    cmp r14,r13
-    jge date_error
 
     mov al,[buffer+r14]
     cmp al,39
@@ -565,10 +554,6 @@ date_done:
     call print_token
     jmp main_loop
 
-date_error:
-    mov rsi,err_date
-    mov rdx,len_err_date
-    call print_error
 
 
 ; ======================
@@ -622,17 +607,37 @@ check_e:
     cmp al,'e'
     je exp_part
 
-    ; ---------- ЦИФРЫ ----------
+   ; ---------- ЦИФРЫ ----------
     cmp al,'0'
-    jl num_done
+    jl check_letter_after_number
     cmp al,'9'
-    jg num_done
+    jg check_letter_after_number
 
     mov [token_buf+rcx],al
     inc rcx
     inc r14
     jmp num_loop
 
+    check_letter_after_number:
+
+    cmp al,'A'
+    jl check_lower_letter
+    cmp al,'Z'
+    jle invalid_identifier
+
+    check_lower_letter:
+    cmp al,'a'
+    jl check_utf_letter
+    cmp al,'z'
+    jle invalid_identifier
+
+    check_utf_letter:
+    cmp al,0xD0
+    je invalid_identifier
+    cmp al,0xD1
+    je invalid_identifier
+
+    jmp num_done
 
 exp_part:
     cmp r8,1
@@ -695,6 +700,11 @@ number_error:
     mov rdx,len_err_number
     call print_error
 
+invalid_identifier:
+    mov rsi,err_invalid_id
+    mov rdx,len_err_invalid_id
+    call print_error
+
 ; ======================
 ; STRING
 ; ======================
@@ -703,8 +713,6 @@ state_string:
     xor rcx,rcx
     inc r14
 str_loop:
-    cmp r14,r13
-    jge string_error
     mov al,[buffer+r14]
     cmp al,'"'
     je str_check
@@ -728,10 +736,6 @@ str_done:
     call print_token
     jmp main_loop
 
-string_error:
-    mov rsi,err_string
-    mov rdx,len_err_string
-    call print_error
 
 
 ; ======================
@@ -743,6 +747,8 @@ state_operator:
     mov [token_buf],al
     mov rcx,1
 
+    cmp al,'='
+    je op_eq
     cmp al,'>'
     je op_gt
     cmp al,'<'
@@ -755,18 +761,34 @@ state_operator:
     jmp main_loop
 
 op_gt:
-    cmp byte [buffer+r14+1],'='
-    jne op_simple
+    mov bl,[buffer+r14+1]
+
+    cmp bl,'='
+    je op_gt_eq
+
+    cmp bl,'>'
+    je invalid_operator
+
+    jmp op_simple
+
+op_gt_eq:
     mov byte [token_buf+1],'='
     mov rcx,2
     inc r14
     jmp op_emit
 
 op_lt:
-    cmp byte [buffer+r14+1],'='
+    mov bl,[buffer+r14+1]
+
+    cmp bl,'='
     je op_lte
-    cmp byte [buffer+r14+1],'>'
+
+    cmp bl,'>'
     je op_ne
+
+    cmp bl,'<'
+    je invalid_operator
+
     jmp op_simple
 
 op_lte:
@@ -790,6 +812,29 @@ op_emit:
     mov rdx,l_op
     call print_token
     jmp main_loop
+
+op_eq:
+    mov bl,[buffer+r14+1]
+
+    cmp bl,'='
+    je invalid_operator
+
+    cmp bl,'>'
+    je invalid_operator
+
+    cmp bl,'<'
+    je invalid_operator
+
+    inc r14
+    mov rsi,t_op
+    mov rdx,l_op
+    call print_token
+    jmp main_loop
+
+invalid_operator:
+    mov rsi,err_invalid_op
+    mov rdx,len_err_invalid_op
+    call print_error
 
 
 ; ======================
